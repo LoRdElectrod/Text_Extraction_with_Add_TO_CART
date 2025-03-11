@@ -1,0 +1,9 @@
+flask
+requests
+together
+python-dotenv
+gunicorn
+mysql-connector-python
+fuzzywuzzy 
+python-Levenshtein
+pymysql
