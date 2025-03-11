@@ -117,27 +117,28 @@
             }
         });
 
-        // Function to open the cart page
         function openCartPage() {
             document.getElementById("cartPage").classList.remove("hidden");
-            fetchCart(); // Fetch and display the cart items
+            fetchCart();
         }
 
-        // Function to close the cart page
         function closeCartPage() {
             document.getElementById("cartPage").classList.add("hidden");
         }
 
-        // Function to update the cart table
         function updateCartTable(cart) {
             const cartTable = document.getElementById("cartTable");
             cartTable.innerHTML = "";
-            
+
             cart.forEach((item, index) => {
                 const row = document.createElement("tr");
                 row.innerHTML = `
                     <td class="border px-4 py-2">${item.medicine}</td>
-                    <td class="border px-4 py-2">${item.quantity}</td>
+                    <td class="border px-4 py-2 flex items-center">
+                        <button onclick="updateCartQuantity(${index}, -1)" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-2 py-1 rounded-lg mx-1">-</button>
+                        <span>${item.quantity}</span>
+                        <button onclick="updateCartQuantity(${index}, 1)" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-2 py-1 rounded-lg mx-1">+</button>
+                    </td>
                     <td class="border px-4 py-2">
                         <button onclick="removeFromCart(${index})" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg transition duration-300">Remove</button>
                     </td>
@@ -146,20 +147,30 @@
             });
         }
 
-        // Function to remove an item from the cart
+        async function updateCartQuantity(index, change) {
+            try {
+                const response = await fetch(`/update_cart/${index}/${change}`, {
+                    method: "PUT",
+                });
+                const data = await response.json();
+                updateCartTable(data.cart);
+            } catch (error) {
+                console.error("Error updating cart quantity:", error);
+            }
+        }
+
         async function removeFromCart(index) {
             try {
                 const response = await fetch(`/remove_from_cart/${index}`, {
                     method: "DELETE",
                 });
                 const data = await response.json();
-                updateCartTable(data.cart); // Update the cart table after removal
+                updateCartTable(data.cart);
             } catch (error) {
                 console.error("Error removing item from cart:", error);
             }
         }
 
-        // Function to fetch the cart
         async function fetchCart() {
             try {
                 const response = await fetch("/get_cart");
@@ -170,7 +181,6 @@
             }
         }
 
-        // Fetch cart on page load
         fetchCart();
     </script>
 
