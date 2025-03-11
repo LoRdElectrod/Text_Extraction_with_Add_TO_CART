@@ -2,15 +2,15 @@ from flask import Flask, request, jsonify, render_template
 import os
 import requests
 import mysql.connector
-import re  # Import regex for better text parsing
+import re
 from together import Together
 from dotenv import load_dotenv
-from fuzzywuzzy import process  # Import fuzzywuzzy for string matching
+from fuzzywuzzy import process
 
 # Load environment variables
 load_dotenv()
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
-IMGUR_CLIENT_ID = os.getenv("IMGUR_CLIENT_ID")  # Add your Imgur client ID in .env
+IMGUR_CLIENT_ID = os.getenv("IMGUR_CLIENT_ID")
 DB_HOST = os.getenv("DB_HOST")
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
@@ -31,7 +31,7 @@ def upload_to_imgur(image_path):
         response = requests.post("https://api.imgur.com/3/upload", headers=headers, files={"image": image_file})
     
     if response.status_code == 200:
-        return response.json()["data"]["link"]  # Get the public URL of the image
+        return response.json()["data"]["link"]
     else:
         raise Exception(f"Imgur upload failed: {response.json()}")
 
@@ -66,21 +66,18 @@ def search_medicine_in_db(medicine_name):
 
 # Function to get similar medicine names using fuzzy matching
 def get_similar_medicines(medicine_name, all_medicines, limit=5):
-    # Use fuzzywuzzy to find the closest matches
     matches = process.extract(medicine_name, all_medicines, limit=limit)
-    return [match[0] for match in matches if match[1] > 50]  # Only return matches with a score > 50
+    return [match[0] for match in matches if match[1] > 50]
 
 # Function to parse medicine name and quantity
 def parse_medicine_and_quantity(text):
-    # Use regex to extract medicine name and quantity
-    # Example: "Coevein 15" -> ("Coevein", "15")
     match = re.match(r"([a-zA-Z\s]+)\s*(\d+)", text)
     if match:
-        medicine_name = match.group(1).strip()  # Extract medicine name
-        quantity = match.group(2).strip()  # Extract quantity
+        medicine_name = match.group(1).strip()
+        quantity = match.group(2).strip()
         return medicine_name, quantity
     else:
-        return text, "1"  # Default quantity to 1 if not specified
+        return text, "1"
 
 @app.route('/')
 def index():
@@ -108,7 +105,7 @@ def process_image():
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Extract only the medicine name and quantity from the image. The given image will be in the format like, {Medicine name}{x quantity},Return the result in the format: {Medicine Name} {Quantity}. Do not include any additional text or explanations."},
+                        {"type": "text", "text": "Extract all medicine names and quantities from the image. Return the result as a list in the format: {Medicine Name} {Quantity}. Separate each item with a new line."},
                         {"type": "image_url", "image_url": {"url": uploaded_image_url}}
                     ]
                 }
@@ -123,31 +120,39 @@ def process_image():
 
         extracted_text = response.choices[0].message.content
 
-        # Parse the extracted text to get medicine name and quantity
-        medicine_name, quantity = parse_medicine_and_quantity(extracted_text)
+        # Split the extracted text into individual items
+        items = extracted_text.strip().split("\n")
 
         # Fetch all medicines from the database for fuzzy matching
         all_medicines = fetch_all_medicines()
 
-        # Search for the medicine in the database
-        matched_medicines = search_medicine_in_db(medicine_name)
-        matched_medicine = matched_medicines[0] if matched_medicines else "No match found"
+        results = []
+        for item in items:
+            medicine_name, quantity = parse_medicine_and_quantity(item)
 
-        # Get similar medicine names if no exact match is found
-        suggestions = []
-        if matched_medicine == "No match found":
-            suggestions = get_similar_medicines(medicine_name, all_medicines)
+            # Search for the medicine in the database
+            matched_medicines = search_medicine_in_db(medicine_name)
+            matched_medicine = matched_medicines[0] if matched_medicines else "No match found"
 
-        # Add to cart if the medicine is found in the database
-        if matched_medicine != "No match found":
-            cart.append({"medicine": matched_medicine, "quantity": quantity})
+            # Get similar medicine names if no exact match is found
+            suggestions = []
+            if matched_medicine == "No match found":
+                suggestions = get_similar_medicines(medicine_name, all_medicines)
+
+            # Add to cart if the medicine is found in the database
+            if matched_medicine != "No match found":
+                cart.append({"medicine": matched_medicine, "quantity": quantity})
+
+            results.append({
+                "extracted_medicine": medicine_name,
+                "matched_medicine": matched_medicine,
+                "suggestions": suggestions,
+                "quantity": quantity
+            })
 
         return jsonify({
-            "extracted_medicine": medicine_name,
-            "matched_medicine": matched_medicine,
-            "suggestions": suggestions,
-            "quantity": quantity,
-            "cart": cart  # Return the updated cart
+            "results": results,
+            "cart": cart
         })
 
     except Exception as e:
@@ -156,6 +161,15 @@ def process_image():
 @app.route('/get_cart', methods=['GET'])
 def get_cart():
     return jsonify({"cart": cart})
+
+@app.route('/remove_from_cart/<int:index>', methods=['DELETE'])
+def remove_from_cart(index):
+    try:
+        if 0 <= index < len(cart):
+            cart.pop(index)
+        return jsonify({"cart": cart})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
