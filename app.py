@@ -3,6 +3,7 @@ import os
 import requests
 import mysql.connector
 import re
+import logging
 from together import Together
 from dotenv import load_dotenv
 from fuzzywuzzy import process
@@ -21,7 +22,10 @@ client = Together(api_key=TOGETHER_API_KEY)
 
 app = Flask(__name__, template_folder="templates")
 
-# Global variable to store the cart
+# Enable logging
+logging.basicConfig(level=logging.INFO)
+
+# Global variable for cart
 cart = []
 
 # Function to upload image to Imgur
@@ -35,7 +39,7 @@ def upload_to_imgur(image_path):
     else:
         raise Exception(f"Imgur upload failed: {response.json()}")
 
-# Function to connect to the database
+# Database connection
 def get_db_connection():
     return mysql.connector.connect(
         host=DB_HOST,
@@ -44,7 +48,7 @@ def get_db_connection():
         database=DB_NAME
     )
 
-# Function to fetch all medicine names from the database
+# Fetch all medicine names from the database
 def fetch_all_medicines():
     connection = get_db_connection()
     cursor = connection.cursor(dictionary=True)
@@ -54,7 +58,7 @@ def fetch_all_medicines():
     connection.close()
     return [result['medicine'] for result in results]
 
-# Function to search for medicine in the database
+# Search for medicine in the database
 def search_medicine_in_db(medicine_name):
     connection = get_db_connection()
     cursor = connection.cursor(dictionary=True)
@@ -64,12 +68,12 @@ def search_medicine_in_db(medicine_name):
     connection.close()
     return [result['medicine'] for result in results]
 
-# Function to get similar medicine names using fuzzy matching
+# Get similar medicine names using fuzzy matching
 def get_similar_medicines(medicine_name, all_medicines, limit=5):
     matches = process.extract(medicine_name, all_medicines, limit=limit)
     return [match[0] for match in matches if match[1] > 50]
 
-# Function to parse medicine name and quantity
+# Parse medicine name and quantity from text
 def parse_medicine_and_quantity(text):
     match = re.match(r"([a-zA-Z\s]+)\s*(\d+)", text)
     if match:
@@ -89,13 +93,13 @@ def process_image():
         if 'image' not in request.files:
             return jsonify({"error": "No image file provided"}), 400
         
-        # Save the uploaded image locally
+        # Save uploaded image
         image_file = request.files['image']
         image_path = f"./temp/{image_file.filename}"
         os.makedirs("./temp", exist_ok=True)
         image_file.save(image_path)
 
-        # Upload image to Imgur and get the public URL
+        # Upload image to Imgur
         uploaded_image_url = upload_to_imgur(image_path)
 
         # Send request to Together AI's Vision Model
@@ -118,19 +122,19 @@ def process_image():
             stop=["<|eot_id|>", "<|eom_id|>"]
         )
 
-        extracted_text = response.choices[0].message.content
+        extracted_text = response.choices[0].message.content.strip()
 
-        # Split the extracted text into individual items
-        items = extracted_text.strip().split("\n")
+        # Split extracted text into items
+        items = extracted_text.split("\n")
 
-        # Fetch all medicines from the database for fuzzy matching
+        # Fetch all medicines from the database
         all_medicines = fetch_all_medicines()
 
         results = []
         for item in items:
             medicine_name, quantity = parse_medicine_and_quantity(item)
 
-            # Search for the medicine in the database
+            # Search for medicine in the database
             matched_medicines = search_medicine_in_db(medicine_name)
             matched_medicine = matched_medicines[0] if matched_medicines else "No match found"
 
@@ -139,9 +143,9 @@ def process_image():
             if matched_medicine == "No match found":
                 suggestions = get_similar_medicines(medicine_name, all_medicines)
 
-            # Add to cart if the medicine is found in the database
+            # Add to cart if medicine found
             if matched_medicine != "No match found":
-                cart.append({"medicine": matched_medicine, "quantity": quantity})
+                cart.append({"medicine": matched_medicine, "quantity": int(quantity)})
 
             results.append({
                 "extracted_medicine": medicine_name,
@@ -150,12 +154,10 @@ def process_image():
                 "quantity": quantity
             })
 
-        return jsonify({
-            "results": results,
-            "cart": cart
-        })
+        return jsonify({"results": results, "cart": cart})
 
     except Exception as e:
+        logging.error(f"Error processing image: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/get_cart', methods=['GET'])
@@ -169,7 +171,27 @@ def remove_from_cart(index):
             cart.pop(index)
         return jsonify({"cart": cart})
     except Exception as e:
+        logging.error(f"Error removing item: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/update_cart/<int:index>/<string:change>', methods=['PUT'])
+def update_cart(index, change):
+    try:
+        change = int(change)  # Convert manually
+        print(f"Received update_cart request: index={index}, change={change}")
+
+        if 0 <= index < len(cart):
+            new_quantity = cart[index]['quantity'] + change
+            if new_quantity >= 1:
+                cart[index]['quantity'] = new_quantity
+            else:
+                cart.pop(index)  # Remove item if quantity goes to 0
+            return jsonify({"cart": cart}), 200
+
+        return jsonify({"error": "Invalid index"}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid quantity value"}), 400
+
 
 if __name__ == '__main__':
     app.run(debug=True)
